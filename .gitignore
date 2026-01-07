@@ -1,0 +1,14 @@
+# Windows-specific files
+Thumbs.db
+Desktop.ini
+
+# Mac-specific files
+.DS_Store
+
+# MATLAB specific files
+*.asv
+*.autosave
+*.slxc
+slprj/
+*.mex*
+*.mlapp_state
