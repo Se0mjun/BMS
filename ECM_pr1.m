@@ -1,74 +1,92 @@
-%% BMS 기초 시뮬레이션: 전류 적산법(Coulomb Counting)과 등가회로 모델
+%% BMS 모델 비교 시뮬레이션: 선형(Linear) vs 비선형(Non-linear) 모델
 % 작성일: 2026.01.07
-% 설명: 1-RC 모델의 저항 성분만 고려하여 배터리 방전 특성을 시뮬레이션함
+% 설명: 이상적인 직선 모델과 실제 배터리 특성(S자 곡선)을 한 그래프에서 비교 분석
 
 clear all; clc; close all; % 작업 공간 초기화 (변수 삭제, 명령창 청소, 그래프 닫기)
 
 %% 1. 파라미터 설정 (Parameter Setting)
-Capacity = 2.0;    % 배터리 용량 [Ah] (2A로 1시간 사용 가능)
-SOC_init = 1.0;    % 초기 SOC (State of Charge) [1.0 = 100%, 0.0 = 0%]
-dt = 1;            % 샘플링 시간 [초] (이 시간이 짧을수록 정밀하지만 계산량 증가)
+Capacity = 2.0;    % 배터리 용량 [Ah]
+SOC_init = 1.0;    % 초기 SOC (100% 충전 상태)
+dt = 1;            % 샘플링 시간 [초]
 R0 = 0.05;         % 배터리 내부 저항 [Ohm]
-Time = 0:dt:3600;  % 시뮬레이션 시간: 0초부터 3600초까지 1초 간격
+Time = 0:dt:3600;  % 시뮬레이션 시간 (1시간)
 
-% 입력 전류 생성 (방전 시나리오)
-% ones(size(Time)): 시간 배열과 똑같은 크기로 1을 꽉 채운 뒤
-% 2를 곱해서 '2A 정전류(Constant Current)' 상태를 만듦
+% 입력 전류 생성 (2A 정전류 방전)
 Current = 2 * ones(size(Time)); 
 
-%% 2. 메모리 할당 (Memory Allocation) - 속도 최적화 핵심
-% 빈 배열([])에 값을 계속 추가하면 매트랩 속도가 매우 느려짐
-% 따라서, 미리 0으로 가득 찬 방(zeros)을 만들어 놓고 값을 덮어쓰는 방식을 사용함
+%% 2. 메모리 할당 (Memory Allocation) - 비교를 위해 변수 분리
+% 속도 최적화를 위해 zeros로 공간을 미리 확보합니다.
 SOC = zeros(size(Time)); 
-Voltage = zeros(size(Time)); 
+
+% [핵심 변경] 두 가지 모델을 비교해야 하므로 전압 저장 공간을 각각 따로 만듭니다.
+Voltage_Lin    = zeros(size(Time)); % 모델 1: 단순 직선 모델용 결과 저장
+Voltage_NonLin = zeros(size(Time)); % 모델 2: 정밀 비선형 모델용 결과 저장
 
 %% 3. 초기값 설정 (Initialization)
-% for문은 k=2(두 번째)부터 시작하므로, 첫 번째(0초) 값은 미리 넣어줘야 함
 SOC(1) = SOC_init;
 
-% t=0 시점의 전압 계산
-% V = OCV - IR (방전이므로 전압 강하 발생)
-OCV_start = 3.0 + 1.2 * SOC_init;        % 초기 OCV
-Voltage(1) = OCV_start - Current(1) * R0; % 초기 단자 전압
+% (1) 선형 모델(Linear)의 초기 전압 계산
+% 수식: OCV = 3.0 + 1.2 * SOC (단순 1차 함수)
+OCV_Lin_Start = 3.0 + 1.2 * SOC_init;
+Voltage_Lin(1) = OCV_Lin_Start - Current(1) * R0;
+
+% (2) 비선형 모델(Non-linear)의 초기 전압 계산
+% 수식: 실제 리튬이온 배터리의 화학적 특성 반영 (지수함수 + 분수함수)
+OCV_NonLin_Start = 3.2 + 0.5*SOC_init - 0.1./(SOC_init+0.1) + 0.2*exp(5*(SOC_init-1));
+Voltage_NonLin(1) = OCV_NonLin_Start - Current(1) * R0;
 
 %% 4. 루프 시뮬레이션 (Loop Simulation)
-% k = 2부터 시작하는 이유:
-% 적산법은 '이전 상태(k-1)'를 참고해야 하는데, k=1이면 '0번째'를 찾게 되어 에러 발생함
 for k = 2:length(Time)
     
-    % (1) SOC 계산: 전류 적산법 (Coulomb Counting)
-    % 식: 현재SOC = 이전SOC - (흐른전류 * 시간) / 전체용량
-    % *방전이므로 뺍니다 (-). 충전이면 더해야 합니다 (+).
-    % *3600을 곱하는 이유: Capacity는 [Ah] 단위이고 dt는 [sec] 단위이므로 단위를 통일하기 위함
+    % (1) SOC 계산: 전류 적산법 (공통 사용)
+    % 어떤 전압 모델을 쓰든, 흘러나간 전류량(SOC)은 물리적으로 동일합니다.
     SOC(k) = SOC(k-1) - (Current(k) * dt) / (Capacity * 3600);
     
-    % (2) OCV 조회 (Open Circuit Voltage)
-    % 가정: OCV는 SOC에 비례하는 1차 함수라고 단순 가정 (실제로는 비선형 Lookup Table 사용)
-    OCV = 3.0 + 1.2 * SOC(k);
+    % (2) 모델 1: 선형 모델 (Linear Model) 계산
+    % 특징: 계산이 빠르고 단순하지만, 실제 배터리 거동과 오차가 큼
+    OCV_Lin = 3.0 + 1.2 * SOC(k);
+    Voltage_Lin(k) = OCV_Lin - Current(k) * R0;
     
-    % (3) 단자 전압(Terminal Voltage) 계산
-    % 옴의 법칙: V_term = OCV - I * R (내부저항에 의한 전압 강하 반영)
-    % Voltage(k)라고 인덱스를 명시해야 배열의 해당 칸에 값이 저장됨
-    Voltage(k) = OCV - Current(k) * R0; 
+    % (3) 모델 2: 비선형 모델 (Non-linear Model) 계산
+    % 특징: 실제 배터리의 'Plateau(평탄 구간)'와 'Cut-off(급락 구간)'를 모사함
+    % 수식 설명:
+    %  - 3.2 + 0.5*SOC : 기본 기울기
+    %  - 0.1./(SOC+0.1): SOC가 0에 가까워질 때 전압 급락 (방전 종지)
+    %  - 0.2*exp(...)  : SOC가 1에 가까울 때 전압 상승 (완충 구간)
+    OCV_NonLin = 3.2 + 0.5*SOC(k) - 0.1./(SOC(k)+0.1) + 0.2*exp(5*(SOC(k)-1));
+    Voltage_NonLin(k) = OCV_NonLin - Current(k) * R0;
     
 end
 
-%% 5. 결과 그래프 출력 (Plotting)
-figure(1); % 그림 창 생성
+%% 5. 결과 그래프 출력 (Comparison Plot)
+figure(1); 
 
-% 첫 번째 그래프: SOC 변화
-subplot(2,1,1);       % 2행 1열 중 1번째 칸
-plot(Time, SOC, 'LineWidth', 1.5); % 선 굵기 1.5로 그림
-grid on;              % 격자 표시
-xlabel('Time [sec]'); % x축 라벨
-ylabel('SOC [-]');    % y축 라벨
+% 첫 번째 그래프: SOC 변화 (공통)
+subplot(2,1,1);
+plot(Time, SOC, 'k', 'LineWidth', 1.5); % 검은색('k') 실선
+grid on;              
+xlabel('Time [sec]'); 
+ylabel('SOC [-]');    
 title('State of Charge (SOC) Change');
-ylim([-0.1 1.1]);     % y축 범위 고정 (보기 좋게)
+ylim([-0.1 1.1]);     
 
-% 두 번째 그래프: 전압 변화
-subplot(2,1,2);       % 2행 1열 중 2번째 칸
-plot(Time, Voltage, 'r', 'LineWidth', 1.5); % 빨간색('r') 선으로 그림
+% 두 번째 그래프: 전압 비교 (여기가 시뮬레이션의 핵심 결과!)
+subplot(2,1,2);
+
+% [Step 1] 선형 모델 그리기 (파란색 점선)
+plot(Time, Voltage_Lin, 'b--', 'LineWidth', 1.5); 
+hold on; % [중요] 기존 그래프를 지우지 않고 유지하는 명령어 (겹쳐 그리기 필수)
+
+% [Step 2] 비선형 모델 그리기 (빨간색 실선)
+plot(Time, Voltage_NonLin, 'r-', 'LineWidth', 1.5); 
+
 grid on;
-xlabel('Time [sec]');
+title('Terminal Voltage Comparison: Ideal vs Real');
+xlabel('Time [sec]'); 
 ylabel('Voltage [V]');
-title('Terminal Voltage Profile');
+
+% [Step 3] 범례(Legend) 추가
+% 그래프에 그려진 순서대로 이름을 붙여줍니다.
+legend('Linear Model (Simple)', 'Non-linear Model (Real-like)', 'Location', 'SouthWest');
+
+hold off; % 겹쳐 그리기 모드 해제
